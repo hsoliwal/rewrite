@@ -46,27 +46,9 @@ const (
 	Local
 )
 
-// Returns "" when Qualid isn't a Literal (defensive — shouldn't happen
-// for well-formed Go source).
-//
-// The Go parser stores the raw quoted source in Literal.Value (and
-// .Source) — `"fmt"` not `fmt` — so this helper always strips the
-// surrounding quote pair before returning.
+// ImportPath returns the path an import names, without its quotes.
 func ImportPath(imp *java.Import) string {
-	if imp == nil {
-		return ""
-	}
-	lit, ok := imp.Qualid.(*java.Literal)
-	if !ok || lit == nil {
-		return ""
-	}
-	raw := ""
-	if s, ok := lit.Value.(string); ok {
-		raw = s
-	} else {
-		raw = lit.Source
-	}
-	return strings.Trim(raw, `"`+"`")
+	return imp.Path()
 }
 
 // PackageName returns the qualifier used to reference the import: its alias,
@@ -413,7 +395,7 @@ func pkgPathOf(fqn string) string {
 // `<Container.Before>import<element traversal>`. To produce
 // `\n\nimport "fmt"` between `package main` and the first statement,
 // the new Container's Before is `"\n\n"`, the Import's Prefix is empty,
-// and the Qualid Literal carries a leading space (printed as the space
+// and the Qualid carries a leading space (printed as the space
 // between `import` and the path string). The first Statement's existing
 // Prefix supplies the trailing blank line before `func`.
 func AddToBlock(cu *golang.CompilationUnit, imp *java.Import, modulePath string) *golang.CompilationUnit {
@@ -423,21 +405,17 @@ func AddToBlock(cu *golang.CompilationUnit, imp *java.Import, modulePath string)
 	c := *cu
 	if c.Imports == nil {
 		c.Imports = &java.Container[*java.Import]{
-			Before: java.Space{Whitespace: "\n\n"},
+			Before: java.MakeSpace(nil, "\n\n"),
 		}
 		// Wire the leading-space convention onto the new import: the
-		// space between `import` and the path lives on the Qualid
-		// literal's Prefix for regular imports. For aliased imports, the
+		// space between `import` and the path lives on the Qualid's
+		// Prefix for regular imports. For aliased imports, the
 		// space after `import` lives on Import.Prefix and the space between
-		// alias and path lives on the literal.
+		// alias and path lives on the Qualid.
 		if imp.Alias != nil {
-			imp.Prefix = java.Space{Whitespace: " "}
+			imp.Prefix = java.MakeSpace(nil, " ")
 		} else {
-			if lit, ok := imp.Qualid.(*java.Literal); ok {
-				cloned := *lit
-				cloned.Prefix = java.Space{Whitespace: " "}
-				imp.Qualid = &cloned
-			}
+			imp.Qualid = withPrefix(imp.Qualid, java.MakeSpace(nil, " "))
 		}
 	}
 	imps := *c.Imports
@@ -523,24 +501,22 @@ func promoteToGrouped(imps *java.Container[*java.Import], elements []java.RightP
 	// between `import` and the path). Inside parens we want the import
 	// indented onto its own line: imp.Prefix="\n\t", Qualid.Prefix="".
 	imp := *rp.Element
-	imp.Prefix = java.Space{Whitespace: "\n\t"}
-	if lit, ok := imp.Qualid.(*java.Literal); ok && imp.Alias == nil {
-		cloned := *lit
-		cloned.Prefix = java.EmptySpace
-		imp.Qualid = &cloned
+	imp.Prefix = java.MakeSpace(nil, "\n\t")
+	if imp.Alias == nil {
+		imp.Qualid = withPrefix(imp.Qualid, java.EmptySpace)
 	}
 	if block := java.FindMarker[golang.ImportBlock](imp.Markers); block != nil {
 		block.Grouped = true
-		block.GroupedBefore = java.Space{Whitespace: " "} // space between `import` and `(`
+		block.GroupedBefore = java.MakeSpace(nil, " ") // space between `import` and `(`
 		imp.Markers = withImportBlock(imp.Markers, block)
 	} else {
 		imps.Markers = java.AddMarker(imps.Markers, golang.GroupedImport{
 			Ident:  uuid.New(),
-			Before: java.Space{Whitespace: " "}, // space between `import` and `(`
+			Before: java.MakeSpace(nil, " "), // space between `import` and `(`
 		})
 	}
 	rp.Element = &imp
-	rp.After = java.Space{Whitespace: "\n"} // newline before `)`
+	rp.After = java.MakeSpace(nil, "\n") // newline before `)`
 
 	if end < len(elements) && elements[end].Element != nil {
 		next := *elements[end].Element
@@ -572,8 +548,8 @@ func moveImportBlock(elements []java.RightPadded[*java.Import]) []java.RightPadd
 // withImportBlock returns markers with its ImportBlock replaced by block,
 // or dropped when block is nil.
 func withImportBlock(markers java.Markers, block *golang.ImportBlock) java.Markers {
-	entries := make([]java.Marker, 0, len(markers.Entries)+1)
-	for _, m := range markers.Entries {
+	entries := make([]java.Marker, 0, len(markers.Entries())+1)
+	for _, m := range markers.Entries() {
 		if _, ok := m.(golang.ImportBlock); !ok {
 			entries = append(entries, m)
 		}
@@ -581,7 +557,7 @@ func withImportBlock(markers java.Markers, block *golang.ImportBlock) java.Marke
 	if block != nil {
 		entries = append(entries, *block)
 	}
-	return java.Markers{ID: markers.ID, Entries: entries}
+	return java.MakeMarkers(markers.GetID(), entries)
 }
 
 // RemoveFromBlock returns a copy of cu with imp deleted from the imports
@@ -599,7 +575,7 @@ func RemoveFromBlock(cu *golang.CompilationUnit, imp *java.Import) *golang.Compi
 	}
 	c := *cu
 	imps := *c.Imports
-	removedLastAfter := java.Space{}
+	removedLastAfter := java.EmptySpace
 	removedWasLast := false
 	removedWasFirst := false
 	out := make([]java.RightPadded[*java.Import], 0, len(imps.Elements))
@@ -636,7 +612,7 @@ func RemoveFromBlock(cu *golang.CompilationUnit, imp *java.Import) *golang.Compi
 // withGroupSeparator prefixes imp with the blank line gofmt puts in front of
 // the import that opens a group.
 func withGroupSeparator(imp *java.Import, indent java.Space) *java.Import {
-	return withPrefixWhitespace(imp, "\n"+indent.Whitespace)
+	return withPrefixWhitespace(imp, "\n"+indent.Whitespace())
 }
 
 // withoutLeadingBlankLines is the inverse: imp keeps its indent but opens no
@@ -645,15 +621,15 @@ func withoutLeadingBlankLines(imp *java.Import) *java.Import {
 	if imp == nil {
 		return imp
 	}
-	return withPrefixWhitespace(imp, canonicalIndentOf(imp.Prefix.Whitespace))
+	return withPrefixWhitespace(imp, canonicalIndentOf(imp.Prefix.Whitespace()))
 }
 
 func withPrefixWhitespace(imp *java.Import, ws string) *java.Import {
-	if imp == nil || imp.Prefix.Whitespace == ws {
+	if imp == nil || imp.Prefix.Whitespace() == ws {
 		return imp
 	}
 	cloned := *imp
-	cloned.Prefix = java.Space{Comments: imp.Prefix.Comments, Whitespace: ws}
+	cloned.Prefix = java.MakeSpace(imp.Prefix.Comments(), ws)
 	return &cloned
 }
 
@@ -671,11 +647,11 @@ func canonicalIndent(elements []java.RightPadded[*java.Import]) java.Space {
 		if rp.Element == nil {
 			continue
 		}
-		if canonical := canonicalIndentOf(rp.Element.Prefix.Whitespace); strings.HasPrefix(canonical, "\n") {
-			return java.Space{Whitespace: canonical}
+		if canonical := canonicalIndentOf(rp.Element.Prefix.Whitespace()); strings.HasPrefix(canonical, "\n") {
+			return java.MakeSpace(nil, canonical)
 		}
 	}
-	return java.Space{Whitespace: "\n\t"}
+	return java.MakeSpace(nil, "\n\t")
 }
 
 // insertGrouped places imp at the end of its own group while preserving
@@ -705,11 +681,11 @@ func insertGrouped(elements []java.RightPadded[*java.Import], imp *java.Import, 
 
 	if len(elements) > 0 {
 		indent := canonicalIndent(elements)
-		if imp.Prefix.Whitespace == "" {
+		if imp.Prefix.Whitespace() == "" {
 			if insertAt > 0 && GroupOf(ImportPath(elements[insertAt-1].Element), modulePath) != target {
 				out[insertAt].Element = withGroupSeparator(imp, indent)
 			} else {
-				out[insertAt].Element = withPrefixWhitespace(imp, indent.Whitespace)
+				out[insertAt].Element = withPrefixWhitespace(imp, indent.Whitespace())
 			}
 		}
 		if insertAt == 0 {
@@ -726,9 +702,18 @@ func insertGrouped(elements []java.RightPadded[*java.Import], imp *java.Import, 
 		prev := &out[len(out)-2]
 		newTail := &out[len(out)-1]
 		newTail.After = prev.After
-		prev.After = java.Space{}
+		prev.After = java.EmptySpace
 	}
 	return out
+}
+
+func withPrefix(qualid *java.FieldAccess, prefix java.Space) *java.FieldAccess {
+	if qualid == nil {
+		return nil
+	}
+	cloned := *qualid
+	cloned.Prefix = prefix
+	return &cloned
 }
 
 // NewImport builds an Import LST node for `import [alias] "path"`. Pass
@@ -736,17 +721,17 @@ func insertGrouped(elements []java.RightPadded[*java.Import], imp *java.Import, 
 // import, or any identifier name for an aliased import.
 func NewImport(path string, alias *string) *java.Import {
 	imp := &java.Import{
-		ID:     uuid.New(),
-		Qualid: &java.Literal{ID: uuid.New(), Source: `"` + path + `"`, Value: path},
+		ID: uuid.New(),
+		Qualid: &java.FieldAccess{
+			ID:     uuid.New(),
+			Target: &java.Empty{ID: uuid.New()},
+			Name:   java.LeftPadded[*java.Identifier]{Element: &java.Identifier{ID: uuid.New(), Name: path}},
+		},
 	}
 	if alias != nil {
-		if lit, ok := imp.Qualid.(*java.Literal); ok {
-			cloned := *lit
-			cloned.Prefix = java.Space{Whitespace: " "}
-			imp.Qualid = &cloned
-		}
+		imp.Qualid.Prefix = java.MakeSpace(nil, " ")
+		// the space before an alias is the import's own prefix, as the parser has it
 		imp.Alias = &java.LeftPadded[*java.Identifier]{
-			Before: java.Space{Whitespace: " "},
 			Element: &java.Identifier{
 				ID:   uuid.New(),
 				Name: *alias,
@@ -810,7 +795,7 @@ func SortByGroup(elements []java.RightPadded[*java.Import], modulePath string) [
 			if j == 0 && len(out) > 0 {
 				item.Element = withGroupSeparator(item.Element, indentPrefix)
 			} else {
-				item.Element = withPrefixWhitespace(item.Element, indentPrefix.Whitespace)
+				item.Element = withPrefixWhitespace(item.Element, indentPrefix.Whitespace())
 			}
 			b.items[j] = item
 		}
@@ -837,7 +822,7 @@ func FindModulePath(cu *golang.CompilationUnit) string {
 	if cu == nil {
 		return ""
 	}
-	for _, m := range cu.Markers.Entries {
+	for _, m := range cu.Markers.Entries() {
 		if gp, ok := m.(golang.GoProject); ok && gp.ModulePath != "" {
 			return gp.ModulePath
 		}

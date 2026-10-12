@@ -424,6 +424,8 @@ public class SolutionParser
         // otherwise fail evaluation with NETSDK1100 on Linux/macOS, and one failing project
         // reference takes the reference metadata of everything that depends on it with it.
         NuGetResolver.ApplyWindowsTargetingDefault(msbuildProperties);
+        NuGetResolver.ApplyAndroidDesignTimeDefault(msbuildProperties);
+        NuGetResolver.ApplyOutOfSupportWorkloadsDefault(msbuildProperties);
 
         _restoredLockFiles = await SolutionRestore.RunAsync(path, hasPackagesConfig, msbuildProperties, ct);
 
@@ -653,7 +655,7 @@ public class SolutionParser
         var filePaths = EnumerateProjectSourceFiles(projectPath);
         if (alreadyParsed is { Count: > 0 })
             filePaths = filePaths
-                .Where(p => !alreadyParsed.Contains(Path.GetRelativePath(rootDir, p).Replace('\\', '/')))
+                .Where(p => !alreadyParsed.Contains(Path.GetRelativePath(rootDir, p)))
                 .ToList();
 
         var ignoredPaths = GetGitIgnoredPaths(rootDir, filePaths);
@@ -725,7 +727,7 @@ public class SolutionParser
             try { docSize = new FileInfo(unit.FilePath).Length; } catch { docSize = 0; }
             if (docSize > MaxParseableSizeBytes)
             {
-                LastOversizePaths.Add(Path.GetRelativePath(rootDir, unit.FilePath).Replace('\\', '/'));
+                LastOversizePaths.Add(Path.GetRelativePath(rootDir, unit.FilePath));
                 continue;
             }
 
@@ -733,8 +735,6 @@ public class SolutionParser
             if (source == null) continue;
 
             var relativePath = Path.GetRelativePath(rootDir, unit.FilePath);
-            // Normalize path separators to forward slashes for cross-platform consistency
-            relativePath = relativePath.Replace('\\', '/');
 
             // Detect UTF-8 BOM — Roslyn's SourceText.ToString() strips the BOM character,
             // so we check the raw file bytes to preserve the flag for patch fidelity.
