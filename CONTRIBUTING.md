@@ -15,6 +15,11 @@ reports upstream status, not the status of your fork commit.
 
 ## Find the right module
 
+The [architecture and coverage guide](doc/architecture/README.md) extends this
+quick map with all configured Gradle projects, nested native builds, package
+responsibilities, selected API contracts and an honest inventory of remaining
+semantic/inline-documentation work.
+
 - [rewrite-core](rewrite-core/): shared tree, visitor and recipe infrastructure
 - [rewrite-test](rewrite-test/): recipe-test support, including `RewriteTest`
 - [rewrite-java](rewrite-java/): Java trees, visitors and recipes; version-specific

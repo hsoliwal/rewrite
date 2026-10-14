@@ -18,6 +18,8 @@ follows below; upstream authorship, licenses, and project identity remain intact
 
 Start with the [fork contributor guide](CONTRIBUTING.md) for the module map,
 JDK/toolchain setup, focused tests, IDE imports and per-module license boundaries.
+For the source-pinned project/module architecture, package responsibilities and
+explicit documentation gaps, see the [architecture and coverage guide](doc/architecture/README.md).
 The checked-in [settings](settings.gradle.kts) and
 [build configuration](build.gradle.kts) describe this checkout. Propose fork
 changes against `hsoliwal/rewrite:main`; upstream contribution instructions and
