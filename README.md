@@ -1,3 +1,7 @@
+## Explore this fork
+
+Start with the [contributor learning guide and command cheat sheet](doc/CONTRIBUTOR_GUIDE.md) for the recipe vocabulary, a worked semantic rename, focused tests, and troubleshooting.
+
 ## M3 direction in this fork
 
 M3 is based on the idea that shared immutable structure and indexed metadata can
