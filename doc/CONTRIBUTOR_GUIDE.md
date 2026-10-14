@@ -136,3 +136,45 @@ comments/formatting, semantic assertions where relevant, and exact checks run.
 The fork's research direction does not establish that a particular recipe has
 been integrated, benchmarked, or behaviorally validated. Existing upstream
 authorship and [license](../LICENSE) remain authoritative.
+
+## Recipe contract lab: choose the matching boundary deliberately
+
+For `ChangeMethodName`, these settings control different questions:
+
+| Setting | Question it answers | Source checkpoint |
+| --- | --- | --- |
+| `methodPattern` | Which declaring type, method, and arguments identify the target? | `MethodMatcher.validate` and the constructed `MethodMatcher` |
+| `newMethodName` | Is the replacement a usable Java method identifier? | `validate()` and `isAcceptable()` |
+| `matchOverrides` | Should overriding methods participate in matching? | Passed into `DeclaresMethod`, `UsesMethod`, and `MethodMatcher` |
+| `ignoreDefinition` | Should source declaring the matched method be excluded by the precondition? | The early return in the condition visitor |
+
+The last setting is particularly easy to misread. In the current implementation,
+when `ignoreDefinition` is true and `DeclaresMethod` marks a Java source file,
+the condition returns the original compilation unit before checking usages.
+Consequently, reason about the **whole source-file precondition**, not a promise
+that declaration nodes alone are skipped while every call in that same file
+is renamed. Inspect or add a fixture that combines a definition and a usage
+before relying on that arrangement.
+
+### From an application change request to a regression case
+
+Suppose an API migration calls for `B.singleArg(String)` to become `B.bar(String)`:
+
+1. Establish whether B's definition is part of the migration or supplied by a
+   different dependency version. This determines the fixture/classpath and the
+   definition policy; a call-only fixture does not prove the migrated app builds.
+2. Start from `changeMethodNameForMethodWithSingleArg()`, retaining the declaring
+   type fixture so the parser can identify the method semantically.
+3. Add an unrelated class with its own `singleArg(String)` and assert that its
+   source remains unchanged. Same spelling is not the same method contract.
+4. Choose override behavior explicitly and cover both invocation and method
+   reference syntax if they occur in the application.
+5. Assert changed source and relevant `JavaType.Method` names. Then run the
+   focused class command above, wider module tests, and the target application's
+   own compile/tests when actually applying the recipe.
+
+Useful diagnostics to record are the exact pattern, flags, parser/classpath,
+small before/after source, and full failing assertion. A validation rejection of
+`newMethodName` is different from a valid recipe that finds no matching attributed
+method. Neither outcome should be “fixed” by deleting type information or
+replacing semantic matching with a text substitution.
