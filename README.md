@@ -14,6 +14,15 @@ Readers are invited to examine the work and contribute representative workloads.
 This section describes the direction of the hsoliwal fork. Upstream documentation
 follows below; upstream authorship, licenses, and project identity remain intact.
 
+## Working on this fork
+
+Start with the [fork contributor guide](CONTRIBUTING.md) for the module map,
+JDK/toolchain setup, focused tests, IDE imports and per-module license boundaries.
+The checked-in [settings](settings.gradle.kts) and
+[build configuration](build.gradle.kts) describe this checkout. Propose fork
+changes against `hsoliwal/rewrite:main`; upstream contribution instructions and
+badges below refer to the upstream project.
+
 ---
 
 <p align="center">
