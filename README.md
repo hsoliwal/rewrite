@@ -1,3 +1,97 @@
+<!-- fork-homepage-guide:start -->
+# Learn and extend repeatable source transformations
+
+This [hsoliwal fork of OpenRewrite](https://github.com/hsoliwal/rewrite) is a
+place to study parsers, semantic trees, and reusable refactoring recipes. The
+[upstream engine](https://github.com/openrewrite/rewrite) supplies the broad
+language and transformation foundation. Use this checkout when developing or
+investigating the engine; applying a published recipe to your application is a
+separate workflow covered by the upstream quickstart below.
+
+## Implementation and fork direction
+
+The tree contains parsers, recipe/visitor APIs, test harnesses and language
+modules. Fork-specific M3 material includes a small bootstrap recipe sidecar and
+analysis tooling, described in [.m3/README.md](.m3/README.md) and the
+[architecture guide](doc/architecture/README.md). The wider reusable-computation
+programme is a direction, not proof that every proposed transformation, semantic
+check, or runtime optimization is implemented or qualified. This README change
+was source-reviewed; it did not run Gradle, recipes, tests, or benchmarks.
+
+## The concepts behind a recipe
+
+| Term | Why it matters |
+| --- | --- |
+| Recipe | A named transformation with configuration, validation and traversal logic |
+| Lossless Semantic Tree (LST) | Source structure retaining comments, formatting and semantic/type information |
+| Visitor | A traversal returning unchanged or replacement nodes |
+| Type attribution | Lets a recipe target a particular method/type instead of every matching word |
+| Marker | Metadata attached to a tree node |
+| `RewriteTest` | Before/after and unchanged-source assertions for recipe behavior |
+
+The flow is **source → parser → LST → recipe/visitor → changed LST → printed
+source**. A review should examine semantic correctness as well as the printed
+diff. Shared APIs live in [`rewrite-core`](rewrite-core); Java recipes in
+[`rewrite-java`](rewrite-java); many Java recipe tests live separately in
+[`rewrite-java-test`](rewrite-java-test).
+
+## Quickstart: one focused recipe test
+
+Use the checked-in Gradle wrapper. The example test module selects a Java 21
+toolchain; other modules and CI have additional JDK/runtime requirements. Follow
+[CONTRIBUTING.md](CONTRIBUTING.md) before a whole-repository build.
+
+```sh
+git clone https://github.com/hsoliwal/rewrite.git
+cd rewrite
+./gradlew --version
+./gradlew :rewrite-java-test:test --tests 'org.openrewrite.java.ChangeMethodNameTest'
+```
+
+On Windows, use `gradlew.bat`. Dependency/plugin resolution must work first;
+settings include moving plugin versions and an authenticated repository. A
+resolution failure does not diagnose recipe correctness. Record the source SHA,
+JDKs and resolved versions when sharing a reproduction; never commit credentials.
+
+## Worked example: rename a method, not a word
+
+[`ChangeMethodName`](rewrite-java/src/main/java/org/openrewrite/java/ChangeMethodName.java)
+accepts a method signature pattern and replacement name. The existing
+[`ChangeMethodNameTest`](rewrite-java-test/src/test/java/org/openrewrite/java/ChangeMethodNameTest.java)
+uses `com.abc.B singleArg(String)` with replacement `bar`:
+
+```java
+// Before                         // Expected after
+new B().singleArg("boo");          new B().bar("boo");
+```
+
+The fixture supplies B's type so the recipe can match it semantically. Unrelated
+methods with the same spelling should stay unchanged. Override matching and
+`ignoreDefinition` are separate controls; the latter participates in a whole
+source-file precondition, so inspect a definition-plus-usage fixture before
+assuming it skips only declaration nodes. Preserve comments, formatting, and
+method-type metadata, and assert unchanged cases alongside changed cases.
+
+## Compact cheat sheet
+
+| Goal | Command or source | Scope |
+| --- | --- | --- |
+| Discover projects | `./gradlew projects` | Actual configured modules, not just directory names |
+| Run the example | Focused `ChangeMethodNameTest` command above | One recipe test class |
+| Broaden Java recipe checks | `./gradlew :rewrite-java-test:test` | That test module |
+| Compile/package | `./gradlew assemble` | Not a test result |
+| Broaden validation | `./gradlew check` | Wider toolchain/runtime requirements apply |
+| Author a reusable change | Recipe + positive/negative `RewriteTest` fixtures | Review output and semantic contracts before application |
+
+For a fuller recipe lab, see the [contributor learning guide](doc/CONTRIBUTOR_GUIDE.md).
+For module and API responsibilities, see [architecture and coverage](doc/architecture/README.md).
+Keep recipes reusable and qualified before applying them to products. Upstream
+project text follows intact; consult root and per-module licenses, since one
+root license does not describe every language module's terms.
+<!-- fork-homepage-guide:end -->
+
+---
+
 ## Explore this fork
 
 Start with the [contributor learning guide and command cheat sheet](doc/CONTRIBUTOR_GUIDE.md) for the recipe vocabulary, a worked semantic rename, focused tests, and troubleshooting.
