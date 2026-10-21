@@ -15,6 +15,9 @@
  */
 package org.openrewrite.java.isolated;
 
+// Modified 2026-10-21 by Hitesh Soliwal and Contributors to the Synexia Project:
+// Preserve the closing brace of inline return tags with the existing inline-tag helper.
+
 import com.sun.source.doctree.*;
 import com.sun.source.doctree.ErroneousTree;
 import com.sun.source.doctree.LiteralTree;
@@ -872,7 +875,11 @@ public class ReloadableJava21JavadocVisitor extends DocTreeScanner<Tree, List<Ja
             before = sourceBefore("@return");
         }
         body.addAll(before);
-        return new Javadoc.Return(randomId(), markers, convertMultiline(node.getDescription()));
+        List<Javadoc> description = convertMultiline(node.getDescription());
+        if (markers.findFirst(LeadingBrace.class).isPresent()) {
+            description.addAll(endBrace());
+        }
+        return new Javadoc.Return(randomId(), markers, description);
     }
 
     @Override

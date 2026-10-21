@@ -15,6 +15,9 @@
  */
 package org.openrewrite.java.tree;
 
+// Modified 2026-10-21 by Hitesh Soliwal and Contributors to the Synexia Project:
+// Add lossless inline-return regressions to the existing Javadoc test owner.
+
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 import org.openrewrite.Issue;
@@ -2279,6 +2282,112 @@ class JavadocTest implements RewriteTest {
                * See <a href="">here</a>\t
                */
               class Test {
+              }
+              """
+          )
+        );
+    }
+
+    @Test
+    void inlineReturnWithTrailingProse() {
+        rewriteRun(
+          java(
+            """
+              interface Test {
+                  /**
+                   * {@return the given value}, unchanged.
+                   */
+                  int value(int value);
+              }
+              """
+          )
+        );
+    }
+
+    @Test
+    void inlineReturnAcrossLines() {
+        rewriteRun(
+          java(
+            """
+              interface Test {
+                  /**
+                   * {@return the given
+                   * value
+                   * } with preserved spacing.
+                   */
+                  int value(int value);
+              }
+              """
+          )
+        );
+    }
+
+    @Test
+    void inlineReturnBeforeBlockTags() {
+        rewriteRun(
+          java(
+            """
+              interface Test {
+                  /**
+                   * {@return the input value}.
+                   *
+                   * @param value the input
+                   * @throws IllegalArgumentException if the input is invalid
+                   * @see Integer
+                   * @since 1.0
+                   */
+                  int value(int value);
+              }
+              """
+          )
+        );
+    }
+
+    @Test
+    void inlineReturnWithNestedInlineTags() {
+        rewriteRun(
+          java(
+            """
+              interface Test {
+                  /**
+                   * {@return a {@code String} from {@link String#valueOf(int)}}.
+                   */
+                  String value(int value);
+              }
+              """
+          )
+        );
+    }
+
+    @Test
+    void inlineReturnWithWhitespaceBeforeClosingBrace() {
+        rewriteRun(
+          java(
+            """
+              interface Test {
+                  /**
+                   * {@return the value   } after the closing brace.
+                   */
+                  int value(int value);
+              }
+              """
+          )
+        );
+    }
+
+    @Test
+    void blockReturnBeforeAnotherBlockTag() {
+        rewriteRun(
+          java(
+            """
+              interface Test {
+                  /**
+                   * Returns the given value.
+                   * @param value the input
+                   * @return the same {@code value}
+                   * @see Integer
+                   */
+                  int value(int value);
               }
               """
           )
