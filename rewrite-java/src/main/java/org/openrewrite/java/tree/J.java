@@ -5140,7 +5140,10 @@ public interface J extends Tree {
                 public J visitBlock(Block block, AtomicReference<JavaType> javaType) {
                     if (!block.getStatements().isEmpty()) {
                         Case caze = (Case) block.getStatements().get(0);
-                        javaType.set(caze.getExpressions().get(0).getType());
+                        // A type-pattern first label (JEP 441 backport) has no expression label: the type stays unknown.
+                        if (!caze.getExpressions().isEmpty()) {
+                            javaType.set(caze.getExpressions().get(0).getType());
+                        }
                     }
                     return block;
                 }
