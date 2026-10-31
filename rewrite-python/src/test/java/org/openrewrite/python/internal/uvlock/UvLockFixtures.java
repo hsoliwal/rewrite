@@ -23,7 +23,7 @@ import java.nio.charset.StandardCharsets;
 import static org.assertj.core.api.Assertions.assertThat;
 
 /**
- * Fixtures under {@code src/test/resources/uvlock/} are real uv output; the README.md there
+ * Fixtures under {@code lock/uv/} are real uv output; the README.md there
  * records which release produced each. Contents are byte-exact reference outputs.
  */
 final class UvLockFixtures {
@@ -155,6 +155,14 @@ final class UvLockFixtures {
       "off37-parent-reachability-markers/uv.lock.before",
       "off38-marker-version-forms/uv.lock.after",
       "off38-marker-version-forms/uv.lock.before",
+      "off39-platform-scoped-wheels/uv.lock.after",
+      "off39-platform-scoped-wheels/uv.lock.before",
+      "off40-old-uv-marker-rewrite/uv.lock.after",
+      "off40-old-uv-marker-rewrite/uv.lock.before",
+      "off41-old-uv-fork-order/uv.lock.after",
+      "off41-old-uv-fork-order/uv.lock.before",
+      "off42-old-uv-platform-wheels/uv.lock.after",
+      "off42-old-uv-platform-wheels/uv.lock.before",
       "off2-add-closure/uv.lock.after",
       "off2-add-closure/uv.lock.before",
       "off3-cascade-flake8/uv.lock.after",
@@ -178,7 +186,7 @@ final class UvLockFixtures {
     }
 
     static String resource(String name) {
-        try (InputStream is = UvLockFixtures.class.getResourceAsStream("/uvlock/" + name)) {
+        try (InputStream is = UvLockFixtures.class.getResourceAsStream("/lock/uv/" + name)) {
             assertThat(is).as(name).isNotNull();
             return new String(is.readAllBytes(), StandardCharsets.UTF_8);
         } catch (IOException e) {

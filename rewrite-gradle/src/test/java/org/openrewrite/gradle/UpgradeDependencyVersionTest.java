@@ -17,7 +17,6 @@ package org.openrewrite.gradle;
 
 import org.jspecify.annotations.Nullable;
 import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.condition.DisabledIfEnvironmentVariable;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
 import org.openrewrite.*;
@@ -2556,8 +2555,6 @@ class UpgradeDependencyVersionTest implements RewriteTest {
     }
 
     @Test
-    @DisabledIfEnvironmentVariable(named = "REWRITE_GRADLE_MIRROR_URL", matches = ".+",
-            disabledReason = "An injected mirror adds a repository, defeating the empty-repositories scenario.")
     void cannotDownloadMetaDataWhenNoRepositoriesAreDefined() {
         rewriteRun(
           buildGradle(
@@ -2577,6 +2574,32 @@ class UpgradeDependencyVersionTest implements RewriteTest {
 
               dependencies {
                 /*~~(com.google.guava:guava failed. Unable to download metadata.)~~>*/implementation "com.google.guava:guava:29.0-jre"
+              }
+              """
+          )
+        );
+    }
+
+    @Test
+    void cannotDownloadMetaDataForOneNotationOfSeveralInOneCall() {
+        rewriteRun(
+          buildGradle(
+            """
+              plugins {
+                id 'java-library'
+              }
+
+              dependencies {
+                implementation "commons-lang:commons-lang:2.6", "com.google.guava:guava:29.0-jre"
+              }
+              """,
+            """
+              plugins {
+                id 'java-library'
+              }
+
+              dependencies {
+                /*~~(com.google.guava:guava failed. Unable to download metadata.)~~>*/implementation "commons-lang:commons-lang:2.6", "com.google.guava:guava:29.0-jre"
               }
               """
           )

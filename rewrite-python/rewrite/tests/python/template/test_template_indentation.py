@@ -173,6 +173,8 @@ class _WrapIfInWith(Recipe):
     def editor(self) -> TreeVisitor[Any, ExecutionContext]:
         class Visitor(PythonVisitor[ExecutionContext]):
             def visit_if(self, if_stmt: j.If, p: ExecutionContext) -> Optional[J]:
+                if self.cursor.first_enclosing(j.Try) is not None:
+                    return if_stmt
                 return _wrap_template.apply(self.cursor, values={'stmt': if_stmt})
 
         return Visitor()
@@ -190,5 +192,38 @@ def test_template_reindents_a_substituted_block_moved_deeper():
             "    with lock:\n"
             "        if a :\n"
             "            b( 1 )\n",
+        )
+    )
+
+
+def test_template_replacement_keeps_crlf_line_breaks():
+    spec = RecipeSpec(recipe=_ReplaceTryWithWith())
+    spec.rewrite_run(
+        python(
+            "def f():\r\n"
+            "    try:\r\n"
+            "        do_stuff()\r\n"
+            "    except KeyError:\r\n"
+            "        pass\r\n",
+            #
+            "def f():\r\n"
+            "    with suppress(KeyError):\r\n"
+            "        do_stuff()\r\n",
+        )
+    )
+
+
+def test_template_with_a_substituted_block_keeps_crlf_line_breaks():
+    spec = RecipeSpec(recipe=_WrapIfInWith())
+    spec.rewrite_run(
+        python(
+            "def f():\r\n"
+            "    if a :\r\n"
+            "        b( 1 )\r\n",
+            #
+            "def f():\r\n"
+            "    with lock:\r\n"
+            "        if a :\r\n"
+            "            b( 1 )\r\n",
         )
     )
