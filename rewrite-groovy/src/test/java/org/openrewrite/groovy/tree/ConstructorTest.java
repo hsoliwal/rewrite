@@ -16,11 +16,14 @@
 package org.openrewrite.groovy.tree;
 
 import org.junit.jupiter.api.Test;
+import org.openrewrite.Issue;
 import org.openrewrite.test.RewriteTest;
+
+import java.util.ArrayList;
+import java.util.List;
 
 import static org.openrewrite.groovy.Assertions.groovy;
 
-@SuppressWarnings("GroovyResultOfObjectAllocationIgnored")
 class ConstructorTest implements RewriteTest {
 
     @Test
@@ -176,6 +179,82 @@ class ConstructorTest implements RewriteTest {
                           super(x, y)
                       }
                   }
+              }
+              """
+          )
+        );
+    }
+
+    @Issue("https://github.com/openrewrite/rewrite/issues/9871")
+    @Test
+    void aNestedClassNameBrokenAfterTheDot() {
+        rewriteRun(
+          groovy(
+            """
+              def m() {
+                foo(1, new Outer.
+                  Inner(1))
+              }
+              """
+          )
+        );
+    }
+
+    @Issue("https://github.com/openrewrite/rewrite/issues/9871")
+    @Test
+    void aSpaceAfterTheDot() {
+        rewriteRun(
+          groovy(
+            """
+              def m() {
+                foo(new Outer. Inner(1))
+              }
+              """
+          )
+        );
+    }
+
+    @Issue("https://github.com/openrewrite/rewrite/issues/9871")
+    @Test
+    void aSpaceBeforeTheDot() {
+        rewriteRun(
+          groovy(
+            """
+              def m() {
+                foo(new Outer .Inner(1))
+              }
+              """
+          )
+        );
+    }
+
+    @Issue("https://github.com/openrewrite/rewrite/issues/9871")
+    @Test
+    void aPackageNameBrokenAfterADot() {
+        rewriteRun(
+          groovy(
+            """
+              def m() {
+                foo(new a.b.
+                  C(1))
+              }
+              """
+          )
+        );
+    }
+
+    @Issue("https://github.com/openrewrite/rewrite/issues/9871")
+    @Test
+    void aDeclaredTypeWithSpacedDotsAndACallOnAType() {
+        rewriteRun(
+          groovy(
+            """
+              def m() {
+                def x = List
+                  .of(1)
+                def y = new Outer.Inner(1)
+                java.util.List z = null
+                java . util . Map w = null
               }
               """
           )
