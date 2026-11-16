@@ -16,7 +16,10 @@
 package org.openrewrite.groovy.tree;
 
 import org.junit.jupiter.api.Test;
+import org.openrewrite.Issue;
 import org.openrewrite.test.RewriteTest;
+
+import java.util.List;
 
 import static org.openrewrite.groovy.Assertions.groovy;
 
@@ -510,6 +513,304 @@ class TraitClassDeclarationTest implements RewriteTest {
                       def f = temporaryFolder.file(name)
                       f.toString()
                   }
+              }
+              """
+          )
+        );
+    }
+
+    @Issue("https://github.com/openrewrite/rewrite/issues/9228")
+    @Test
+    void staticBlockBeforeAMethod() {
+        rewriteRun(
+          groovy(
+            """
+              trait T {
+                static String X
+                static {
+                  X = 'x'
+                }
+                def m() { 1 }
+              }
+              """
+          )
+        );
+    }
+
+    @Issue("https://github.com/openrewrite/rewrite/issues/9228")
+    @Test
+    void twoStaticBlocksBetweenMethods() {
+        rewriteRun(
+          groovy(
+            """
+              trait T {
+                static String X
+                static int N
+                static {
+                  X = 'x'
+                }
+                def m() { X }
+                static {
+                  N = 2
+                }
+                def n() { N }
+              }
+              """
+          )
+        );
+    }
+
+    @Issue("https://github.com/openrewrite/rewrite/issues/9228")
+    @Test
+    void instanceInitializerBlock() {
+        rewriteRun(
+          groovy(
+            """
+              trait T {
+                String y
+                {
+                  y = 'y'
+                }
+                def m() { y }
+              }
+              """
+          )
+        );
+    }
+
+    @Issue("https://github.com/openrewrite/rewrite/issues/9228")
+    @Test
+    void privateMethod() {
+        rewriteRun(
+          groovy(
+            """
+              trait T {
+                def m() {
+                  n()
+                }
+
+                private n() {
+                  [*:k()]
+                }
+
+                private k() {
+                  [a: 1]
+                }
+              }
+              """
+          )
+        );
+    }
+
+    @Issue("https://github.com/openrewrite/rewrite/issues/9228")
+    @Test
+    void fieldInitializersInAPackagedTrait() {
+        rewriteRun(
+          groovy(
+            """
+              package a.b
+
+              trait T {
+                public static int PORT = 8080
+                static String NAME = 'n'
+                String s = 's'
+              }
+              """
+          )
+        );
+    }
+
+    @Issue("https://github.com/openrewrite/rewrite/issues/9228")
+    @Test
+    void staticFinalFieldValues() {
+        rewriteRun(
+          groovy(
+            """
+              package a
+
+              trait T {
+                static final String A = "a"
+                private static final int B = 8
+                final static var C = \"""
+                  {"c": 1}
+                \"""
+              }
+              """
+          )
+        );
+    }
+
+    @Issue("https://github.com/openrewrite/rewrite/issues/9228")
+    @Test
+    void annotationsWhoseClassesAreNotOnTheClasspath() {
+        rewriteRun(
+          groovy(
+            """
+              package a
+
+              import spock.lang.Shared
+
+              trait T {
+                @Shared
+                static List w = []
+
+                @Autowired
+                List v
+
+                @Shared @Other
+                static int n
+              }
+              """
+          )
+        );
+    }
+
+    @Issue("https://github.com/openrewrite/rewrite/issues/9228")
+    @Test
+    void annotationNotOnTheClasspathBeforeOneThatIs() {
+        rewriteRun(
+          groovy(
+            """
+              trait T {
+                @Other @Deprecated
+                static int n
+
+                @Other
+                @Deprecated
+                List v
+
+                @Deprecated @Other @Deprecated2
+                static String s = 's'
+              }
+              """
+          )
+        );
+    }
+
+    @Issue("https://github.com/openrewrite/rewrite/issues/9228")
+    @Test
+    void superCalls() {
+        rewriteRun(
+          groovy(
+            """
+              package a
+
+              trait T implements U {
+                void setup() {
+                  super.setup()
+                  super.go(1, "x")
+                  def r = super.get()
+                }
+              }
+              """
+          )
+        );
+    }
+
+    @Issue("https://github.com/openrewrite/rewrite/issues/9228")
+    @Test
+    void dynamicNames() {
+        rewriteRun(
+          groovy(
+            """
+              package a
+
+              trait T {
+                static {
+                  foo(undeclared)
+                }
+
+                def m() {
+                  x.a().b(other).c()
+                  def v = third
+                }
+              }
+              """
+          )
+        );
+    }
+
+    @Issue("https://github.com/openrewrite/rewrite/issues/9228")
+    @Test
+    void anOverloadThatForwardsToAnother() {
+        rewriteRun(
+          groovy(
+            """
+              trait T {
+                private m(String a) {
+                  m(a, 1)
+                }
+
+                private m(String a, int b) {
+                  foo(b)
+                }
+              }
+              """
+          )
+        );
+    }
+
+    @Issue("https://github.com/openrewrite/rewrite/issues/9228")
+    @Test
+    void aParameterWithADefaultValue() {
+        rewriteRun(
+          groovy(
+            """
+              trait T {
+                def m(String a, int b = 2) {
+                  b
+                }
+              }
+              """
+          )
+        );
+    }
+
+    @Issue("https://github.com/openrewrite/rewrite/issues/9228")
+    @Test
+    void allOfTheseInOneTrait() {
+        rewriteRun(
+          groovy(
+            """
+              package com.example.shared
+
+              import static com.example.Stubs.*
+
+              trait StubServerTrait {
+                static Server server
+
+                public static int PORT = 8992
+
+                final static var OK_RESPONSE = \"""
+                  {
+                    "status": "ok"
+                  }
+                \"""
+
+                static {
+                  server = new Server(PORT)
+                  server.start()
+                  println "Server started on ${server.port()}"
+                }
+
+                def stubOk() {
+                  return server.stub(post("/x")
+                    .willReturn(ok()
+                      .withBody(OK_RESPONSE)))
+                }
+
+                private body(String action, long id) {
+                  [
+                    Request: [
+                      *:common(id),
+                      Action: action,
+                    ]
+                  ]
+                }
+
+                private common(long id) {
+                  [Id: "$id"]
+                }
               }
               """
           )
