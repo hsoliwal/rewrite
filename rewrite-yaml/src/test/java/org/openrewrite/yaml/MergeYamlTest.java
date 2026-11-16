@@ -48,6 +48,21 @@ import static org.openrewrite.yaml.MergeYaml.InsertMode.Last;
 class MergeYamlTest implements RewriteTest {
 
     @Test
+    void identicalMappingDoesNotChangeTree() {
+        rewriteRun(
+          spec -> spec.recipe(new MergeYaml("$", "spring:\n  http:\n    client:\n      factory: jdk", false, null, null, null, null, null)),
+          yaml(
+            """
+              spring:
+                http:
+                  client:
+                    factory: jdk # Keep the configured factory
+              """
+          )
+        );
+    }
+
+    @Test
     void preserveNestedTrailingCommentBeforeMultipleRootSiblings() {
         rewriteRun(
           spec -> spec.recipe(new MergeYaml("$.a.tracing", "export:\n  endpoint: url", false, null, null, null, null, null)),
@@ -4088,6 +4103,39 @@ class MergeYamlTest implements RewriteTest {
                     beta: fixedValue
                   bar:
                     alpha: randomValue2
+                    beta: fixedValue
+              """
+          )
+        );
+    }
+
+    @Test
+    void wildcardMatchesEachSequenceItem() {
+        rewriteRun(
+          spec -> spec.recipe(new MergeYaml(
+            "$.list.services.*",
+            //language=yaml
+            "beta: fixedValue",
+            false,
+            null,
+            null,
+            null,
+            null,
+            null
+          )),
+          yaml(
+            """
+              list:
+                services:
+                  - alpha: randomValue1
+                  - alpha: randomValue2
+              """,
+            """
+              list:
+                services:
+                  - alpha: randomValue1
+                    beta: fixedValue
+                  - alpha: randomValue2
                     beta: fixedValue
               """
           )

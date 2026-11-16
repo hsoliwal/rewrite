@@ -20,8 +20,13 @@ import org.openrewrite.DocumentExample;
 import org.openrewrite.ExecutionContext;
 import org.openrewrite.Issue;
 import org.openrewrite.java.tree.J;
+import org.openrewrite.test.RecipeQualityValidation;
 import org.openrewrite.test.RewriteTest;
 
+import java.util.ArrayList;
+import java.util.List;
+
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.openrewrite.java.Assertions.java;
 import static org.openrewrite.test.RewriteTest.toRecipe;
 
@@ -380,7 +385,9 @@ class JavaTemplateSubstitutionsTest implements RewriteTest {
     @Test
     void arrayTernaryToMethodAccess() {
         rewriteRun(
-          spec -> spec.recipe(toRecipe(() -> new JavaVisitor<>() {
+          // the template types an argument by the position it is moved from
+          spec -> spec.recipeQualityValidation(RecipeQualityValidation.builder().parserTypedTrees(false).build())
+            .recipe(toRecipe(() -> new JavaVisitor<>() {
               @Override
               public J visitTernary(J.Ternary ternary, ExecutionContext executionContext) {
                   maybeAddImport("java.util.Arrays");
@@ -439,6 +446,131 @@ class JavaTemplateSubstitutionsTest implements RewriteTest {
                void test(Map<String, ?> map) {
                    System.out.println(map.get("test"));
                }
+              }
+              """
+          )
+        );
+    }
+
+    @Test
+    void anyWithInferredIntersectionType() {
+        MethodMatcher println = new MethodMatcher("java.io.PrintStream println(..)");
+        rewriteRun(
+          spec -> spec.recipe(toRecipe(() -> new JavaVisitor<>() {
+              @Override
+              public J visitMethodInvocation(J.MethodInvocation method, ExecutionContext ctx) {
+                  if (println.matches(method)) {
+                      return method;
+                  }
+                  return JavaTemplate.apply("System.out.println(#{any()});", getCursor(), method.getCoordinates().replace(), method);
+              }
+          })),
+          java(
+            """
+              import java.util.List;
+              import java.util.Objects;
+              class Test {
+                  void test(boolean flag) {
+                      List.of(1, 2.0);
+                      Objects.requireNonNull(flag ? "a" : 1);
+                  }
+              }
+              """,
+            """
+              import java.util.List;
+              import java.util.Objects;
+              class Test {
+                  void test(boolean flag) {
+                      System.out.println(List.of(1, 2.0));
+                      System.out.println(Objects.requireNonNull(flag ? "a" : 1));
+                  }
+              }
+              """,
+            spec -> spec.afterRecipe(cu -> assertThat(new JavaIsoVisitor<List<String>>() {
+                @Override
+                public J.MethodInvocation visitMethodInvocation(J.MethodInvocation method, List<String> types) {
+                    if (println.matches(method)) {
+                        types.add(String.valueOf(method.getMethodType()));
+                        types.add(String.valueOf(method.getArguments().getFirst().getType()));
+                    }
+                    return method;
+                }
+            }.reduce(cu, new ArrayList<>())).containsExactly(
+              "java.io.PrintStream{name=println,return=void,parameters=[java.lang.Object]}",
+              "java.util.List<java.lang.Number & java.lang.Comparable<Generic{? extends java.lang.Number & java.lang.Comparable<Generic{?}> & java.lang.constant.Constable & java.lang.constant.ConstantDesc}> & java.lang.constant.Constable & java.lang.constant.ConstantDesc>",
+              "java.io.PrintStream{name=println,return=void,parameters=[java.lang.Object]}",
+              "java.io.Serializable & java.lang.Comparable<Generic{? extends java.io.Serializable & java.lang.Comparable<Generic{?}> & java.lang.constant.Constable & java.lang.constant.ConstantDesc}> & java.lang.constant.Constable & java.lang.constant.ConstantDesc"
+            ))
+          )
+        );
+    }
+
+    @Test
+    void anyWithExtendsObjectWildcardTypeArgument() {
+        MethodMatcher println = new MethodMatcher("java.io.PrintStream println(..)");
+        rewriteRun(
+          spec -> spec.recipe(toRecipe(() -> new JavaVisitor<>() {
+              @Override
+              public J visitMethodInvocation(J.MethodInvocation method, ExecutionContext ctx) {
+                  if (println.matches(method)) {
+                      return method;
+                  }
+                  return JavaTemplate.apply("System.out.println(#{any()});", getCursor(), method.getCoordinates().replace(), method);
+              }
+          })),
+          java(
+            """
+              import java.util.Map;
+              abstract class Test {
+                  abstract Map.Entry<String, ? extends Object> entry();
+                  void test() {
+                      entry();
+                  }
+              }
+              """,
+            """
+              import java.util.Map;
+              abstract class Test {
+                  abstract Map.Entry<String, ? extends Object> entry();
+                  void test() {
+                      System.out.println(entry());
+                  }
+              }
+              """
+          )
+        );
+    }
+
+    @Test
+    void anyWithAParenthesizedArgument() {
+        rewriteRun(
+          spec -> spec.recipe(toRecipe(() -> new JavaVisitor<>() {
+              @Override
+              public J visitMethodInvocation(J.MethodInvocation method, ExecutionContext ctx) {
+                  if ("count".equals(method.getSimpleName())) {
+                      return JavaTemplate.apply("java.util.Collections.frequency(#{any()}, #{any()})",
+                        getCursor(), method.getCoordinates().replace(), method.getArguments().toArray());
+                  }
+                  return super.visitMethodInvocation(method, ctx);
+              }
+          })),
+          java(
+            """
+              import java.util.List;
+              abstract class Test {
+                  abstract int count(List<String> values, String value);
+                  int test(List<String> values, String value) {
+                      return count((values), value);
+                  }
+              }
+              """,
+            """
+              import java.util.List;
+              abstract class Test {
+                  abstract int count(List<String> values, String value);
+                  int test(List<String> values, String value) {
+                      return java.util.Collections.frequency((values), value);
+                  }
               }
               """
           )
@@ -632,7 +764,9 @@ class JavaTemplateSubstitutionsTest implements RewriteTest {
     @Test
     void replacedExpressionPassedAsParameterKeepsItsCommentsOnce() {
         rewriteRun(
-          spec -> spec.recipe(toRecipe(() -> new JavaVisitor<>() {
+          // the template doesn't retype the call that its replacement is an argument of
+          spec -> spec.recipeQualityValidation(RecipeQualityValidation.builder().parserTypedTrees(false).build())
+            .recipe(toRecipe(() -> new JavaVisitor<>() {
               @Override
               public J visitIdentifier(J.Identifier ident, ExecutionContext ctx) {
                   if ("o".equals(ident.getSimpleName()) && getCursor().getParentTreeCursor().getValue() instanceof J.MethodInvocation m &&

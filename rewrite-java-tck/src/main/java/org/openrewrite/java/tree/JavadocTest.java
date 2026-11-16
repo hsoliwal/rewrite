@@ -2102,6 +2102,69 @@ class JavadocTest implements RewriteTest {
         );
     }
 
+    @Test
+    void doubledCarriageReturnBeforeLineFeed() {
+        rewriteRun(
+          java("" +
+               "class A {\r\r\n" +
+               "\t/**\r\r\n" +
+               "\t * Plain text.\r\r\n" +
+               "\t *\r\r\n" +
+               "\t * @param a the value.\r\r\n" +
+               "\t * @return the result.\r\r\n" +
+               "\t */\r\r\n" +
+               "\tint m(int a) { return 0; }\r\r\n" +
+               "}\r\r\n",
+            spec -> spec.afterRecipe(cu -> assertThat(javadocTags(cu))
+              .containsExactly(Javadoc.Parameter.class, Javadoc.Return.class))
+          )
+        );
+    }
+
+    @Test
+    void doubledCarriageReturnPlainText() {
+        rewriteRun(
+          java("" +
+               "class A {\r\r\n" +
+               "\t/**\r\r\n" +
+               "\t * Line 1.\r\r\n" +
+               "\t * Line 2.\r\r\n" +
+               "\t */\r\r\n" +
+               "\tint m() { return 0; }\r\r\n" +
+               "}\r\r\n"
+          )
+        );
+    }
+
+    @Test
+    void carriageReturnOnlyLineEndings() {
+        rewriteRun(
+          java("" +
+               "class A {\r" +
+               "    /**\r" +
+               "     * Line 1.\r" +
+               "     *\r" +
+               "     * @param a the value.\r" +
+               "     * @return the result.\r" +
+               "     */\r" +
+               "    int m(int a) { return 0; }\r" +
+               "}\r",
+            spec -> spec.afterRecipe(cu -> assertThat(javadocTags(cu))
+              .containsExactly(Javadoc.Parameter.class, Javadoc.Return.class))
+          )
+        );
+    }
+
+    private static List<Class<?>> javadocTags(J.CompilationUnit cu) {
+        J.MethodDeclaration method = (J.MethodDeclaration) cu.getClasses().get(0).getBody().getStatements().get(0);
+        return method.getComments().stream()
+          .filter(Javadoc.DocComment.class::isInstance)
+          .flatMap(comment -> ((Javadoc.DocComment) comment).getBody().stream())
+          .filter(tag -> tag instanceof Javadoc.Parameter || tag instanceof Javadoc.Return)
+          .map(Object::getClass)
+          .collect(toList());
+    }
+
     @Issue("https://github.com/openrewrite/rewrite/issues/1090")
     @Test
     void paramNoDescriptionWithCRLF() {
@@ -2189,8 +2252,6 @@ class JavadocTest implements RewriteTest {
     @Test
     void varargsWithPrefix() {
         rewriteRun(
-          // for some reason the compiler AST's type attribution is incomplete here
-          spec -> spec.typeValidationOptions(TypeValidation.none()),
           java(
             """
               class A {
@@ -2735,6 +2796,120 @@ class JavadocTest implements RewriteTest {
         assertThat(parsed).hasSize(2).allMatch(J.CompilationUnit.class::isInstance);
     }
 
+    @Issue("https://github.com/openrewrite/rewrite-migrate-java/pull/1438")
+    @Test
+    void multiVariableFieldDeclaration() {
+        rewriteRun(
+          java(
+            """
+              class Test {
+                  /** Dangling. */
+                  /** Documents both {@link String fields}. */
+                  private String a, b;
+              }
+              """,
+            spec -> spec.afterRecipe(cu -> {
+                J.VariableDeclarations field = (J.VariableDeclarations) cu.getClasses().get(0).getBody().getStatements().get(0);
+                assertThat(field.getVariables()).hasSize(2);
+                List<Comment> comments = field.getPrefix().getComments();
+                assertThat(comments).hasSize(2);
+                assertThat(comments.get(0)).isInstanceOf(TextComment.class);
+                assertThat(comments.get(1)).isInstanceOf(Javadoc.DocComment.class);
+            })
+          )
+        );
+    }
+
+    @Issue("https://github.com/openrewrite/rewrite/issues/9731")
+    @Test
+    void tabAfterMargin() {
+        rewriteRun(
+          java(
+            """
+              /**
+               *  a
+               * \tb
+               */
+              class Test {}
+              """
+          )
+        );
+    }
+
+    @Issue("https://github.com/openrewrite/rewrite/issues/9731")
+    @Test
+    void tabsAfterMarginAcrossLines() {
+        rewriteRun(
+          java(
+            """
+              /**
+               *  every link is connected to one of following entities: file, folder,
+               *  user or enterprise. Depending on the type of the entity, we use a different entity
+               * \tNote: 'file' and 'folder' are mapped via an aliased 'item' entity
+               * \trelationship. The enterprise entity is not sharded.
+               */
+              enum LinkType {
+                  FILE
+              }
+              """
+          )
+        );
+    }
+
+    @Issue("https://github.com/openrewrite/rewrite/issues/9731")
+    @Test
+    void tabMarginsAndTags() {
+        rewriteRun(
+          java(
+            """
+              /**
+               *\ta
+               *\t\tb
+               * \t@param x y
+               */
+              class Test {}
+              """
+          )
+        );
+    }
+
+    @Test
+    void tabAfterMarginBeforeHtmlElement() {
+        rewriteRun(
+          java(
+            """
+              /**
+               * States: <br>
+               * <ol>
+               * \t<li> 1. Pending read
+               *  <li> 2. Header assembled
+               * </ol>
+               * <ul>
+               * \t<li><b>100:</b> Local storage</li>
+               * </ul>
+               * @author Someone
+               */
+              class Test {}
+              """
+          )
+        );
+    }
+
+    @Test
+    void nonBreakingSpaceAfterMargin() {
+        rewriteRun(
+          java(
+            """
+              /**
+               *  a
+               * \u00A0b
+               */
+              class Test {}
+              """
+          )
+        );
+    }
+
     @Issue("https://github.com/openrewrite/rewrite/issues/5855")
     @Nested
     class GenericWildcard {
@@ -3132,6 +3307,21 @@ class JavadocTest implements RewriteTest {
     @MinimumJava25
     class MarkdownDocComment {
         @Test
+        void tripleSlashDoubledCarriageReturnBeforeLineFeed() {
+            rewriteRun(
+              java("" +
+                   "class A {\r\r\n" +
+                   "    /// Line 1.\r\r\n" +
+                   "    ///\r\r\n" +
+                   "    /// @param a the value.\r\r\n" +
+                   "    /// @return the result.\r\r\n" +
+                   "    int m(int a) { return 0; }\r\r\n" +
+                   "}\r\r\n"
+              )
+            );
+        }
+
+        @Test
         void tripleSlashRoundTrip() {
             rewriteRun(
               java(
@@ -3356,5 +3546,116 @@ class JavadocTest implements RewriteTest {
               )
             );
         }
+    }
+
+    @Issue("https://github.com/openrewrite/rewrite/issues/9877")
+    @Test
+    void aMarginStarOnTheOpeningLine() {
+        rewriteRun(
+          java(
+            """
+              class C {
+                /**   * Get x
+                 * @return x
+                 **/  int x() { return 1; }
+              }
+              """
+          )
+        );
+    }
+
+    @Issue("https://github.com/openrewrite/rewrite/issues/9877")
+    @Test
+    void withAClosingLine() {
+        rewriteRun(
+          java(
+            """
+              class C {
+                /**   * Get x
+                 */
+                int x() { return 1; }
+              }
+              """
+          )
+        );
+    }
+
+    @Issue("https://github.com/openrewrite/rewrite/issues/9877")
+    @Test
+    void twoStars() {
+        rewriteRun(
+          java(
+            """
+              class C {
+                /**  ** Get x
+                 */
+                int x() { return 1; }
+              }
+              """
+          )
+        );
+    }
+
+    @Issue("https://github.com/openrewrite/rewrite/issues/9877")
+    @Test
+    void oneLineParsesAlready() {
+        rewriteRun(
+          java(
+            """
+              class C {
+                /** * Get x */
+                int x() { return 1; }
+              }
+              """
+          )
+        );
+    }
+
+    @Issue("https://github.com/openrewrite/rewrite/issues/9877")
+    @Test
+    void noMarginParsesAlready() {
+        rewriteRun(
+          java(
+            """
+              class C {
+                /** Get x
+                 */
+                int x() { return 1; }
+              }
+              """
+          )
+        );
+    }
+
+    @Issue("https://github.com/openrewrite/rewrite/issues/9877")
+    @Test
+    void parsesAlready() {
+        rewriteRun(
+          java(
+            """
+              class C {
+                /*** Get x
+                 */
+                int x() { return 1; }
+              }
+              """
+          )
+        );
+    }
+
+    @Issue("https://github.com/openrewrite/rewrite/issues/9877")
+    @Test
+    void aStarInTheText() {
+        rewriteRun(
+          java(
+            """
+              class C {
+                /** a * b
+                 */
+                int x() { return 1; }
+              }
+              """
+          )
+        );
     }
 }

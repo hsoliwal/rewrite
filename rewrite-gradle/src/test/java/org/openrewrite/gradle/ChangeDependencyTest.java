@@ -15,6 +15,7 @@
  */
 package org.openrewrite.gradle;
 
+import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 import org.openrewrite.DocumentExample;
 import org.openrewrite.ExecutionContext;
@@ -36,6 +37,7 @@ import static org.openrewrite.gradle.Assertions.settingsGradle;
 import static org.openrewrite.gradle.toolingapi.Assertions.withToolingApi;
 import static org.openrewrite.java.Assertions.java;
 import static org.openrewrite.java.Assertions.mavenProject;
+import static org.openrewrite.maven.MavenCentralMirrorExtension.withMavenCentralMirror;
 import static org.openrewrite.properties.Assertions.properties;
 import static org.openrewrite.toml.Assertions.toml;
 
@@ -43,6 +45,58 @@ class ChangeDependencyTest implements RewriteTest {
     @Override
     public void defaults(RecipeSpec spec) {
         spec.beforeRecipe(withToolingApi());
+    }
+
+    @Test
+    void selectsVersionFromSubprojectRepositoriesInRootSubprojectsBlock() {
+        rewriteRun(
+          spec -> spec.recipe(new ChangeDependency("org.springframework.cloud", "spring-cloud-starter-aws-secrets-manager-config",
+              "io.awspring.cloud", "spring-cloud-aws-starter-secrets-manager", "3.3.x", null, null, null))
+            // Without Maven settings, so that only the projects' own repositories are searched
+            .executionContext(withMavenCentralMirror(new InMemoryExecutionContext(t -> {
+                throw new AssertionError(t);
+            }))),
+          settingsGradle(
+            """
+              rootProject.name = 'root'
+              include 'app'
+              """
+          ),
+          buildGradle(
+            """
+              subprojects {
+                  apply plugin: 'java-library'
+
+                  repositories {
+                      mavenCentral()
+                  }
+
+                  dependencies {
+                      implementation 'org.springframework.cloud:spring-cloud-starter-aws-secrets-manager-config:2.2.6.RELEASE'
+                  }
+              }
+              """,
+            """
+              subprojects {
+                  apply plugin: 'java-library'
+
+                  repositories {
+                      mavenCentral()
+                  }
+
+                  dependencies {
+                      implementation 'io.awspring.cloud:spring-cloud-aws-starter-secrets-manager:3.3.1'
+                  }
+              }
+              """
+          ),
+          buildGradle(
+            """
+              description = 'app'
+              """,
+            spec -> spec.path("app/build.gradle")
+          )
+        );
     }
 
     @Test
@@ -789,123 +843,6 @@ class ChangeDependencyTest implements RewriteTest {
                       classpath "io.moderne:moderne-gradle-plugin:0.39.0"
                       classpath group: "io.moderne", name: "moderne-gradle-plugin", version: "0.39.0"
                   }
-              }
-              """
-          )
-        );
-    }
-
-    @Test
-    void doNotPinWhenNotVersioned() {
-        rewriteRun(
-          spec -> spec.recipe(new ChangeDependency("mysql", "mysql-connector-java", "com.mysql", "mysql-connector-j", "8.0.x", null, null, true)),
-          buildGradle(
-            """
-              plugins {
-                id 'java'
-                id 'org.springframework.boot' version '2.6.1'
-                id 'io.spring.dependency-management' version '1.0.11.RELEASE'
-              }
-
-              repositories {
-                 mavenCentral()
-              }
-
-              dependencies {
-                  runtimeOnly 'mysql:mysql-connector-java'
-              }
-              """,
-            """
-              plugins {
-                id 'java'
-                id 'org.springframework.boot' version '2.6.1'
-                id 'io.spring.dependency-management' version '1.0.11.RELEASE'
-              }
-
-              repositories {
-                 mavenCentral()
-              }
-
-              dependencies {
-                  runtimeOnly 'com.mysql:mysql-connector-j'
-              }
-              """
-          )
-        );
-    }
-
-    @Test
-    void doNotPinWhenNotVersionedOnMap() {
-        rewriteRun(
-          spec -> spec.recipe(new ChangeDependency("mysql", "mysql-connector-java", "com.mysql", "mysql-connector-j", "8.0.x", null, null, true)),
-          buildGradle(
-            """
-              plugins {
-                id 'java'
-                id 'org.springframework.boot' version '2.6.1'
-                id 'io.spring.dependency-management' version '1.0.11.RELEASE'
-              }
-
-              repositories {
-                 mavenCentral()
-              }
-
-              dependencies {
-                  runtimeOnly group: 'mysql', name: 'mysql-connector-java'
-              }
-              """,
-            """
-              plugins {
-                id 'java'
-                id 'org.springframework.boot' version '2.6.1'
-                id 'io.spring.dependency-management' version '1.0.11.RELEASE'
-              }
-
-              repositories {
-                 mavenCentral()
-              }
-
-              dependencies {
-                  runtimeOnly group: 'com.mysql', name: 'mysql-connector-j'
-              }
-              """
-          )
-        );
-    }
-
-    @Test
-    void pinWhenOverrideManagedVersion() {
-        rewriteRun(
-          spec -> spec.recipe(new ChangeDependency("mysql", "mysql-connector-java", "com.mysql", "mysql-connector-j", "8.0.x", null, true, true)),
-          buildGradle(
-            """
-              plugins {
-                id 'java'
-                id 'org.springframework.boot' version '2.6.1'
-                id 'io.spring.dependency-management' version '1.0.11.RELEASE'
-              }
-
-              repositories {
-                 mavenCentral()
-              }
-
-              dependencies {
-                  runtimeOnly 'mysql:mysql-connector-java'
-              }
-              """,
-            """
-              plugins {
-                id 'java'
-                id 'org.springframework.boot' version '2.6.1'
-                id 'io.spring.dependency-management' version '1.0.11.RELEASE'
-              }
-
-              repositories {
-                 mavenCentral()
-              }
-
-              dependencies {
-                  runtimeOnly 'com.mysql:mysql-connector-j:8.0.33'
               }
               """
           )
@@ -2015,5 +1952,132 @@ class ChangeDependencyTest implements RewriteTest {
             )
           )
         );
+    }
+
+    @Nested
+    class OnGradle8 implements RewriteTest {
+
+        // Spring Boot 2's Gradle plugin calls Configuration#getUploadTaskName, which Gradle 9 removed
+        @Override
+        public void defaults(RecipeSpec spec) {
+            spec.beforeRecipe(withToolingApi("8.14.5"));
+        }
+
+        @Test
+        void doNotPinWhenNotVersionedOnMap() {
+            rewriteRun(
+              spec -> spec.recipe(new ChangeDependency("mysql", "mysql-connector-java", "com.mysql", "mysql-connector-j", "8.0.x", null, null, true)),
+              buildGradle(
+                """
+                  plugins {
+                    id 'java'
+                    id 'org.springframework.boot' version '2.6.1'
+                    id 'io.spring.dependency-management' version '1.0.11.RELEASE'
+                  }
+
+                  repositories {
+                     mavenCentral()
+                  }
+
+                  dependencies {
+                      runtimeOnly group: 'mysql', name: 'mysql-connector-java'
+                  }
+                  """,
+                """
+                  plugins {
+                    id 'java'
+                    id 'org.springframework.boot' version '2.6.1'
+                    id 'io.spring.dependency-management' version '1.0.11.RELEASE'
+                  }
+
+                  repositories {
+                     mavenCentral()
+                  }
+
+                  dependencies {
+                      runtimeOnly group: 'com.mysql', name: 'mysql-connector-j'
+                  }
+                  """
+              )
+            );
+        }
+
+        @Test
+        void doNotPinWhenNotVersioned() {
+            rewriteRun(
+              spec -> spec.recipe(new ChangeDependency("mysql", "mysql-connector-java", "com.mysql", "mysql-connector-j", "8.0.x", null, null, true)),
+              buildGradle(
+                """
+                  plugins {
+                    id 'java'
+                    id 'org.springframework.boot' version '2.6.1'
+                    id 'io.spring.dependency-management' version '1.0.11.RELEASE'
+                  }
+
+                  repositories {
+                     mavenCentral()
+                  }
+
+                  dependencies {
+                      runtimeOnly 'mysql:mysql-connector-java'
+                  }
+                  """,
+                """
+                  plugins {
+                    id 'java'
+                    id 'org.springframework.boot' version '2.6.1'
+                    id 'io.spring.dependency-management' version '1.0.11.RELEASE'
+                  }
+
+                  repositories {
+                     mavenCentral()
+                  }
+
+                  dependencies {
+                      runtimeOnly 'com.mysql:mysql-connector-j'
+                  }
+                  """
+              )
+            );
+        }
+
+        @Test
+        void pinWhenOverrideManagedVersion() {
+            rewriteRun(
+              spec -> spec.recipe(new ChangeDependency("mysql", "mysql-connector-java", "com.mysql", "mysql-connector-j", "8.0.x", null, true, true)),
+              buildGradle(
+                """
+                  plugins {
+                    id 'java'
+                    id 'org.springframework.boot' version '2.6.1'
+                    id 'io.spring.dependency-management' version '1.0.11.RELEASE'
+                  }
+
+                  repositories {
+                     mavenCentral()
+                  }
+
+                  dependencies {
+                      runtimeOnly 'mysql:mysql-connector-java'
+                  }
+                  """,
+                """
+                  plugins {
+                    id 'java'
+                    id 'org.springframework.boot' version '2.6.1'
+                    id 'io.spring.dependency-management' version '1.0.11.RELEASE'
+                  }
+
+                  repositories {
+                     mavenCentral()
+                  }
+
+                  dependencies {
+                      runtimeOnly 'com.mysql:mysql-connector-j:8.0.33'
+                  }
+                  """
+              )
+            );
+        }
     }
 }
