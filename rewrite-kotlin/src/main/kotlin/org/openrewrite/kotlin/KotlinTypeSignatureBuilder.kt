@@ -340,6 +340,10 @@ class KotlinTypeSignatureBuilder(private val firSession: FirSession, private val
     }
 
     @OptIn(SymbolInternals::class)
+    fun initializerSignature(initializer: FirAnonymousInitializer): String =
+        classSignature(initializer.containingDeclarationSymbol.fir) + "{name=,return=void,parameters=[]}"
+
+    @OptIn(SymbolInternals::class)
     fun methodSignature(
         fir: FirFunction,
         parent: Any?
@@ -539,7 +543,13 @@ class KotlinTypeSignatureBuilder(private val firSession: FirSession, private val
                 oSig
             }
 
+            isFileFacadeMember(property.symbol) -> when (val source = property.containerSource) {
+                is JvmPackagePartSource -> source.facadeFqn
+                else -> fileSignature(property.symbol.getContainingFile() ?: firFile)
+            }
+
             parent is FirFunction -> methodSignature(parent, null)
+            parent is FirAnonymousInitializer -> initializerSignature(parent)
             parent is FirFile -> fileSignature(parent)
             parent is FirClass -> classSignature(parent)
             else -> fileSignature(firFile)
@@ -724,14 +734,7 @@ class KotlinTypeSignatureBuilder(private val firSession: FirSession, private val
             return convertKotlinFqToJavaFq(classId.toString())
         }
 
-        fun fileSignature(file: FirFile): String {
-            val sig = StringBuilder()
-            if (file.packageFqName.asString().isNotEmpty()) {
-                sig.append("${file.packageFqName.asString()}.")
-            }
-            sig.append(file.name.replace("/", ".").replace("\\", ".").replace(".kt", "Kt"))
-            return sig.toString()
-        }
+        fun fileSignature(file: FirFile): String = file.facadeFqn
 
         fun convertKotlinFqToJavaFq(kotlinFqn: String): String {
             val cleanedFqn = kotlinFqn

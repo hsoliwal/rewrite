@@ -30,6 +30,7 @@ import org.jetbrains.kotlin.fir.expressions.impl.FirElseIfTrueCondition
 import org.jetbrains.kotlin.fir.expressions.impl.FirSingleExpressionBlock
 import org.jetbrains.kotlin.fir.psi
 import org.jetbrains.kotlin.fir.references.FirErrorNamedReference
+import org.jetbrains.kotlin.fir.references.FirReference
 import org.jetbrains.kotlin.fir.references.FirResolvedNamedReference
 import org.jetbrains.kotlin.fir.references.resolved
 import org.jetbrains.kotlin.fir.resolve.calls.FirSyntheticFunctionSymbol
@@ -45,11 +46,13 @@ import org.jetbrains.kotlin.psi
 import org.jetbrains.kotlin.psi.*
 import org.openrewrite.java.tree.JavaType
 import org.openrewrite.kotlin.KotlinTypeMapping
+import java.util.IdentityHashMap
 
 class PsiElementAssociations(val typeMapping: KotlinTypeMapping, val file: FirFile) {
 
     private val elementMap: MutableMap<PsiElement, MutableList<FirInfo>> = HashMap()
     private val typeMap: MutableMap<PsiElement, ConeTypeProjection> = HashMap()
+    private val callsByCallee: MutableMap<FirReference, FirFunctionCall> = IdentityHashMap()
 
     @OptIn(SymbolInternals::class)
     fun initialize() {
@@ -60,6 +63,9 @@ class PsiElementAssociations(val typeMapping: KotlinTypeMapping, val file: FirFi
                     val psiElement = element.source!!.psi!!
                     val firInfo = FirInfo(element, depth)
                     data.computeIfAbsent(psiElement) { ArrayList() } += firInfo
+                }
+                if (element is FirFunctionCall) {
+                    callsByCallee[element.calleeReference] = element
                 }
                 depth++
                 element.acceptChildren(this, data)
@@ -165,6 +171,10 @@ class PsiElementAssociations(val typeMapping: KotlinTypeMapping, val file: FirFi
                 return typeMapping.type(matchClassId(psiElement, symbol.classId), owner)
             }
         }
+        val local = referencedLocalVariable(fir)
+        if (local != null) {
+            return typeMapping.type(local, localVariableOwner(local))
+        }
         return if (fir != null) typeMapping.type(fir, owner) else null
     }
 
@@ -259,6 +269,9 @@ class PsiElementAssociations(val typeMapping: KotlinTypeMapping, val file: FirFi
             else -> {
                 when (val fir = primary(psi)) {
                     is FirResolvedNamedReference -> {
+                        // In `a[i] = v` or `a[i] += v`, the primary FIR of `a[i]` is the `set` or `get`
+                        // reference, not its call.
+                        callsByCallee[fir]?.let { return typeMapping.methodInvocationType(it) }
                         when (val sym = fir.resolvedSymbol) {
                             is FirFunctionSymbol<*> -> typeMapping.methodDeclarationType(sym.fir, null)
                             else -> {
@@ -324,6 +337,26 @@ class PsiElementAssociations(val typeMapping: KotlinTypeMapping, val file: FirFi
             is FirErrorNamedReference, is FirPackageDirective -> null
             else -> null
         }
+    }
+
+    @OptIn(SymbolInternals::class)
+    private fun referencedLocalVariable(fir: FirElement?): FirVariable? {
+        val reference = (if (fir is FirPropertyAccessExpression) fir.calleeReference else fir) as? FirResolvedNamedReference
+        val variable = (reference?.resolvedSymbol as? FirVariableSymbol<*>)?.fir
+        return if (variable is FirValueParameter || variable is FirProperty && variable.isLocal) variable else null
+    }
+
+    /**
+     * Mirrors `KotlinTreeParserVisitor.owner`, so a use gets the same variable type as its declaration.
+     * That owner is the nearest enclosing named function, `init` block, class or file.
+     * The parser never makes an enum entry an owner, though `KtEnumEntry` is a `KtClass`.
+     */
+    private fun localVariableOwner(variable: FirVariable): FirElement? {
+        val declaration = variable.source?.psi ?: return null
+        val owner = PsiTreeUtil.findFirstParent(declaration, true) {
+            it is KtNamedFunction || it is KtClassInitializer || it is KtFile || it is KtClass && it !is KtEnumEntry
+        }
+        return owner?.let { primary(it) }
     }
 
     fun fir(psi: PsiElement?, filter: (FirElement) -> Boolean) : FirElement? {

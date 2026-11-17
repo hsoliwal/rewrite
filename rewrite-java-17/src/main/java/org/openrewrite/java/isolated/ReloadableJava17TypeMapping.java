@@ -408,9 +408,14 @@ class ReloadableJava17TypeMapping implements JavaTypeMapping<Tree> {
                     type = ((Type.ForAll) type).qtype;
                 }
 
-                resolvedOwner = type instanceof Type.MethodType ?
-                        methodDeclarationType(sym, (JavaType.FullyQualified) declaringClass(type(sym.owner.type))) :
-                        declaringClass(type(type));
+                if (type instanceof Type.MethodType) {
+                    resolvedOwner = methodDeclarationType(sym, (JavaType.FullyQualified) declaringClass(type(sym.owner.type)));
+                } else if (type == null && sym instanceof Symbol.MethodSymbol &&
+                           ((Symbol.MethodSymbol) sym).isStaticOrInstanceInit()) {
+                    resolvedOwner = initializerType((Symbol.MethodSymbol) sym);
+                } else {
+                    resolvedOwner = declaringClass(type(type));
+                }
                 assert resolvedOwner != null;
             }
 
@@ -426,6 +431,19 @@ class ReloadableJava17TypeMapping implements JavaTypeMapping<Tree> {
      */
     private static @Nullable JavaType declaringClass(@Nullable JavaType owner) {
         return owner instanceof JavaType.Parameterized ? ((JavaType.Parameterized) owner).getType() : owner;
+    }
+
+    /**
+     * javac 21 and earlier leave the placeholder method symbol of an initializer block without a type,
+     * so give it the {@code void()} method type that later javac versions produce.
+     */
+    private JavaType.Method initializerType(Symbol.MethodSymbol initializer) {
+        JavaType.FullyQualified declaringType = (JavaType.FullyQualified) declaringClass(type(initializer.owner.type));
+        return typeFactory.methodFor(signatureBuilder.methodSignature(initializer),
+                () -> new JavaType.Method(null, initializer.flags_field, declaringType, "",
+                        JavaType.Primitive.Void, (String[]) null, null, null, null, null, null),
+                method -> {
+                });
     }
 
     /**

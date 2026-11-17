@@ -47,7 +47,6 @@ from .replacement import substitution_marker
 # Wrapper function name used to make template code parseable
 WRAPPER_FUNCTION_NAME = "__WRAPPER__"
 _WRAPPER_INDENT = "    "
-_STRING_TOKENS = {tokenize.STRING, tokenize.FSTRING_MIDDLE, getattr(tokenize, 'TSTRING_MIDDLE', tokenize.STRING)}
 
 
 _stdlib_venv: Optional[str] = None
@@ -103,23 +102,18 @@ class TemplateOptions:
 def _indented_outside_strings(code: str) -> str:
     """``code`` indented to be the wrapper's body, but for the lines a string runs on to, whose leading
     whitespace is the string's own text."""
+    from rewrite.python._parser_visitor import FSTRING_MIDDLE, TSTRING_MIDDLE
     continued: Set[int] = set()
     try:
         for token in tokenize.generate_tokens(io.StringIO(code).readline):
-            if token.type in _STRING_TOKENS:
+            if token.type in (tokenize.STRING, FSTRING_MIDDLE, TSTRING_MIDDLE):
                 continued.update(range(token.start[0] + 1, token.end[0] + 1))
     except (tokenize.TokenError, SyntaxError):
-        # Code that does not tokenize does not parse either, and the parse says what is wrong with it.
+        # The parser tokenizes the wrapper around this code too, so code that does not tokenize fails to parse there,
+        # and the parse says what is wrong with it.
         pass
     return '\n'.join(line if row in continued else _WRAPPER_INDENT + line
                      for row, line in enumerate(code.split('\n'), 1))
-
-
-def _out_of_wrapper(space: Space) -> Space:
-    return space.replace(
-        whitespace=space.whitespace.replace('\n' + _WRAPPER_INDENT, '\n'),
-        comments=list_map(lambda c: c.replace(suffix=c.suffix.replace('\n' + _WRAPPER_INDENT, '\n')),
-                          space.comments))
 
 
 def _in_statement_slot(coordinates: PythonCoordinates, cursor: Optional['Cursor']) -> bool:
@@ -332,7 +326,8 @@ class TemplateEngine:
             lines.append(f"def {WRAPPER_FUNCTION_NAME}():")
             lines.append(f"{_WRAPPER_INDENT}return {dedented}")
         else:
-            # Statement(s): wrap directly
+            # In a function, a name the context or a typed capture declares has its declared type, where at the
+            # module's level ty would take it as unbound or narrow it to the value assigned.
             lines.append(f"def {WRAPPER_FUNCTION_NAME}():")
             lines.append(_indented_outside_strings(dedented))
 
@@ -627,9 +622,13 @@ class _OutOfWrapper(PythonVisitor[None]):
     template's tree is laid out as its code is, whether or not it is formatted where it lands."""
 
     def visit_space(self, space: Optional[Space], p: None) -> Space:
-        return _out_of_wrapper(super().visit_space(space, p))
+        space = super().visit_space(space, p)
+        return space.replace(
+            whitespace=space.whitespace.replace('\n' + _WRAPPER_INDENT, '\n'),
+            comments=list_map(lambda c: c.replace(suffix=c.suffix.replace('\n' + _WRAPPER_INDENT, '\n')),
+                              space.comments))
 
     def visit_marker(self, marker: Marker, p: None) -> Marker:
         if isinstance(marker, TrailingComma):
-            return marker.replace(suffix=_out_of_wrapper(marker.suffix))
+            return marker.replace(suffix=self.visit_space(marker.suffix, p))
         return marker

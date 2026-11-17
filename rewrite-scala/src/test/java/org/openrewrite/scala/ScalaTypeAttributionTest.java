@@ -42,7 +42,11 @@ import org.openrewrite.test.RewriteTest;
 import org.openrewrite.test.TypeValidation;
 
 import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Predicate;
@@ -829,7 +833,7 @@ class ScalaTypeAttributionTest implements RewriteTest {
 
                 J.Import future = importOf(cu, "Future");
                 assertThat(TypeUtils.asFullyQualified(future.getQualid().getType()).getFullyQualifiedName()).isEqualTo("scala.concurrent.Future");
-                assertThat(future.getQualid().getName().getFieldType().getName()).isEqualTo("Future");
+                assertThat(future.getQualid().getName().getFieldType()).isNull();
                 assertThat(future.getMarkers().findFirst(ImplicitImport.class)).isEmpty();
 
                 JavaType.Method max = (JavaType.Method) importOf(cu, "max").getQualid().getType();
@@ -843,7 +847,7 @@ class ScalaTypeAttributionTest implements RewriteTest {
                 assertThat(vVariable.getName()).isEqualTo("v");
                 assertThat(TypeUtils.asFullyQualified(vVariable.getOwner()).getFullyQualifiedName()).isEqualTo("Defaults$");
                 assertThat(v.getQualid().getName().getType()).isEqualTo(JavaType.Primitive.Int);
-                assertThat(v.getQualid().getName().getFieldType()).isEqualTo(vVariable);
+                assertThat(v.getQualid().getName().getFieldType()).isNull();
                 assertThat(v.getMarkers().findFirst(ImplicitImport.class)).isEmpty();
 
                 J.Import iv = importOf(cu, "iv");
@@ -852,7 +856,7 @@ class ScalaTypeAttributionTest implements RewriteTest {
 
                 J.Import io = importOf(cu, "IO");
                 assertThat(TypeUtils.asFullyQualified(io.getQualid().getType()).getFullyQualifiedName()).isEqualTo("Defaults$IO$");
-                assertThat(io.getQualid().getName().getFieldType().getName()).isEqualTo("IO");
+                assertThat(io.getQualid().getName().getFieldType()).isNull();
                 assertThat(io.getMarkers().findFirst(ImplicitImport.class)).isPresent();
 
                 S.ImportSelector helper = find(cu, S.ImportSelector.class, sel -> sel.getName() != null && sel.getName().getSimpleName().equals("helper"));
@@ -860,9 +864,47 @@ class ScalaTypeAttributionTest implements RewriteTest {
                 assertThat(helper.getAlias().getType()).isEqualTo(helper.getName().getType());
                 assertThat(helper.getMarkers().findFirst(ImplicitImport.class)).isEmpty();
                 S.ImportSelector i2 = find(cu, S.ImportSelector.class, sel -> sel.getName() != null && sel.getName().getSimpleName().equals("iv"));
-                assertThat(i2.getName().getFieldType().getName()).isEqualTo("iv");
+                assertThat(i2.getName().getFieldType()).isNull();
                 assertThat(i2.getMarkers().findFirst(ImplicitImport.class)).isPresent();
             })
+          )
+        );
+    }
+
+    @Test
+    void objectNameIsATypeNameNotAField() {
+        rewriteRun(
+          scala(
+            """
+            import java.lang.System.out
+            class S {
+              def m(): Unit = System.out.println(1)
+            }
+            """,
+            spec -> spec.afterRecipe(cu -> {
+                assertThat(findAll(cu, J.Identifier.class, i -> i.getSimpleName().equals("System"))).hasSize(2).allSatisfy(system -> {
+                    assertThat(system.getFieldType()).isNull();
+                    assertThat(TypeUtils.asFullyQualified(system.getType()).getFullyQualifiedName()).isEqualTo("java.lang.System");
+                });
+
+                J.FieldAccess systemOut = find(cu, J.FieldAccess.class, fa -> fa.getSimpleName().equals("out") && fa.getTarget() instanceof J.Identifier);
+                JavaType.Variable out = systemOut.getName().getFieldType();
+                assertThat(out.getName()).isEqualTo("out");
+                assertThat(TypeUtils.asFullyQualified(out.getOwner()).getFullyQualifiedName()).isEqualTo("java.lang.System");
+            })
+          )
+        );
+    }
+
+    @Test
+    void importedPackageHasNoType() {
+        rewriteRun(
+          scala(
+            """
+            import scala.collection.mutable
+            """,
+            spec -> spec.afterRecipe(cu ->
+                assertThat(importOf(cu, "mutable").getQualid().getName().getType()).isNull())
           )
         );
     }
@@ -1298,6 +1340,46 @@ class ScalaTypeAttributionTest implements RewriteTest {
                 assertThat(s.getFieldType()).isNotNull();
                 assertThat(s.getFieldType().getName()).isEqualTo("s");
                 assertThat(s.getFieldType().getType()).isEqualTo(s.getType());
+            })
+          )
+        );
+    }
+
+    @Test
+    void initializerBlockLocalIsOwnedByTheInitializer() {
+        rewriteRun(
+          scala(
+            """
+            class C {
+              {
+                var block = 1
+                block += 1
+              }
+            }
+            object O {
+              {
+                var oblock = 1
+                oblock += 1
+              }
+            }
+            """,
+            spec -> spec.afterRecipe(cu -> {
+                Map<String, Set<String>> ownersByName = new HashMap<>();
+                new JavaIsoVisitor<Integer>() {
+                    @Override
+                    public J.Identifier visitIdentifier(J.Identifier ident, Integer p) {
+                        if (ident.getSimpleName().endsWith("block")) {
+                            ownersByName.computeIfAbsent(ident.getSimpleName(), k -> new HashSet<>())
+                              .add(String.valueOf(ident.getFieldType().getOwner()));
+                        }
+                        return ident;
+                    }
+                }.visit(cu, 0);
+
+                assertThat(ownersByName).isEqualTo(Map.of(
+                  "block", Set.of("C{name=,return=void,parameters=[]}"),
+                  "oblock", Set.of("O${name=,return=void,parameters=[]}")
+                ));
             })
           )
         );

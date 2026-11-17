@@ -80,7 +80,7 @@ public class MethodMatcher
                 }
                 else
                 {
-                    matchers.Add(new TypeArgMatcher(GlobToRegex(part), part));
+                    matchers.Add(TypeArgMatcher.Of(part));
                 }
             }
             _argMatchers = matchers.ToArray();
@@ -308,22 +308,48 @@ public class MethodMatcher
     {
         private readonly Regex _pattern;
         private readonly Regex? _fqnPattern;
+        private readonly int _arrayDimensions;
 
-        public TypeArgMatcher(Regex pattern, string originalGlob)
+        private TypeArgMatcher(string elementGlob, int arrayDimensions)
         {
-            _pattern = pattern;
+            _pattern = GlobToRegex(elementGlob);
+            _arrayDimensions = arrayDimensions;
             // If the pattern is a C# keyword, also match the fully-qualified name
-            if (KeywordToFqn.TryGetValue(originalGlob, out var fqn))
+            if (KeywordToFqn.TryGetValue(elementGlob, out var fqn))
                 _fqnPattern = GlobToRegex(fqn);
         }
 
+        public static TypeArgMatcher Of(string glob)
+        {
+            var dimensions = 0;
+            while (glob.EndsWith("[]", StringComparison.Ordinal))
+            {
+                glob = glob[..^2].TrimEnd();
+                dimensions++;
+            }
+            return new TypeArgMatcher(glob, dimensions);
+        }
+
         public override bool Matches(JavaType paramType)
+        {
+            for (var i = 0; i < _arrayDimensions; i++)
+            {
+                if (paramType is not JavaType.Array { ElemType: { } elemType })
+                    return false;
+                paramType = elemType;
+            }
+
+            return paramType is not JavaType.Array && MatchesElement(paramType);
+        }
+
+        private bool MatchesElement(JavaType paramType)
         {
             // The shared tree spells primitives with Java keywords (e.g. boolean and int).
             // Compare their .NET names too, so bool and System.Int32 match attributed C# calls.
             var fqn = paramType is JavaType.Primitive primitive
                 ? TypeUtils.PrimitiveToFqn(primitive.Kind) ?? primitive.Keyword
                 : TypeUtils.GetFullyQualifiedName(paramType);
+
             if (fqn != null)
             {
                 if (_pattern.IsMatch(fqn)) return true;
