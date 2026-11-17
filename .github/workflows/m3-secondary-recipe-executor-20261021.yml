@@ -1,0 +1,142 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Hitesh Soliwal and contributors
+name: M3 Secondary Recipe Execution (read-only)
+
+on:
+  workflow_call:
+    inputs:
+      executor_sha:
+        description: Full immutable commit SHA of the public hsoliwal/rewrite recipe receiver
+        required: true
+        type: string
+      target_pom:
+        description: Relative path to the caller's M3 recipe POM
+        required: false
+        default: .m3/openrewrite-recipes/pom.xml
+        type: string
+      pr_number:
+        description: Caller repository pull request number; 0 skips patch intake
+        required: false
+        default: 0
+        type: number
+      chrome_ai:
+        description: Require an explicitly configured M3JDK21 optional Chrome AI module
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  recipe-source-and-patch-intake:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Validate immutable executor and bounded caller inputs
+        shell: bash
+        env:
+          EXECUTOR_SHA: ${{ inputs.executor_sha }}
+          TARGET_POM: ${{ inputs.target_pom }}
+          PR_NUMBER: ${{ inputs.pr_number }}
+        run: |
+          set -euo pipefail
+          [[ "$EXECUTOR_SHA" =~ ^[0-9a-f]{40}$ ]] || { echo 'HOLD: executor must be SHA-pinned'; exit 2; }
+          [[ "$TARGET_POM" =~ ^[A-Za-z0-9._/-]+$ ]] || exit 2
+          [[ "$TARGET_POM" != /* && "$TARGET_POM" != ../* && "$TARGET_POM" != */../* && "$TARGET_POM" != *'/..' ]] || exit 2
+          [[ "$PR_NUMBER" =~ ^[0-9]+$ ]] || exit 2
+
+      - name: Checkout caller product source without write credentials
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+          path: m3-product
+
+      - name: Checkout secondary public recipe receiver at exact revision
+        uses: actions/checkout@v4
+        with:
+          repository: hsoliwal/rewrite
+          ref: ${{ inputs.executor_sha }}
+          persist-credentials: false
+          path: m3-recipe-secondary
+
+      - name: Verify source identities and receiver presence
+        shell: bash
+        env:
+          EXECUTOR_SHA: ${{ inputs.executor_sha }}
+          TARGET_POM: ${{ inputs.target_pom }}
+        run: |
+          set -euo pipefail
+          test "$(git -C m3-recipe-secondary rev-parse HEAD)" = "$EXECUTOR_SHA"
+          test -f "m3-product/$TARGET_POM"
+          test -f m3-recipe-secondary/.m3/openrewrite-recipes/pom.xml
+          test -f m3-recipe-secondary/.m3/openrewrite-recipes/src/main/java/com/synexia/m3/bootstrap/M3BootstrapTaskRecipe.java
+          echo 'M3-SECONDARY-BOOTSTRAP: exact executor identity admitted; source mutation authority=false' >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Select Java 21 for existing recipe custody tests
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Execute existing secondary-source OpenRewrite recipe proof
+        shell: bash
+        working-directory: m3-recipe-secondary
+        run: >-
+          mvn -B -ntp -f .m3/openrewrite-recipes/pom.xml
+          -Dtest=M3CanonicalSharedBootstrap20261018Test test
+
+      - name: Fetch and SHA-pin caller PR patch without applying it
+        if: ${{ inputs.pr_number > 0 }}
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+          PR_NUMBER: ${{ inputs.pr_number }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/m3-github-patch"
+          gh api "repos/$REPOSITORY/pulls/$PR_NUMBER" > "$RUNNER_TEMP/m3-github-patch/pr.json"
+          gh api -H 'Accept: application/vnd.github.patch' "repos/$REPOSITORY/pulls/$PR_NUMBER" > "$RUNNER_TEMP/m3-github-patch/pr.patch"
+          python3 - "$RUNNER_TEMP/m3-github-patch/pr.json" "$RUNNER_TEMP/m3-github-patch/pr.patch" <<'PY'
+          import hashlib, json, pathlib, re, sys
+          meta = json.loads(pathlib.Path(sys.argv[1]).read_text(encoding='utf-8'))
+          raw = pathlib.Path(sys.argv[2]).read_bytes()
+          if not (raw and len(raw) <= 8 * 1024 * 1024):
+              raise SystemExit('HOLD: missing or oversized patch')
+          if not (raw.startswith(b'From ') or raw.startswith(b'diff --git ')):
+              raise SystemExit('HOLD: GitHub did not return patch bytes')
+          head = meta['head']['sha']
+          if not re.fullmatch(r'[0-9a-f]{40}', head):
+              raise SystemExit('HOLD: invalid GitHub head')
+          digest = hashlib.sha256(raw).hexdigest()
+          print('M3-PATCH-INTAKE: repo=%s pr=%s head=%s sha256=%s bytes=%s state=FETCHED_UNAPPLIED' %
+                (meta['base']['repo']['full_name'], meta['number'], head, digest, len(raw)))
+          with open(__import__('os').environ['GITHUB_STEP_SUMMARY'], 'a', encoding='utf-8') as out:
+              out.write('\nGitHub patch received and SHA-pinned as **UNAPPLIED**. Head: `%s`, patch SHA-256: `%s`.\n' % (head, digest))
+          PY
+
+      - name: Verify opt-in Chrome AI module availability, without model fallback
+        if: ${{ inputs.chrome_ai }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -z "${M3JDK21_HOME:-}" || ! -x "${M3JDK21_HOME}/bin/java" ]]; then
+            echo 'HOLD: Chrome AI was requested, but optional M3JDK21 is not installed on this runner' >&2
+            exit 3
+          fi
+          if ! "$M3JDK21_HOME/bin/java" --list-modules | grep -Eq '^com[.]m3jdk[.]chrome2api(@|$)'; then
+            echo 'HOLD: M3JDK21 optional Chrome2api module is absent' >&2
+            exit 3
+          fi
+          echo 'Chrome AI optional module detected; actual inference and model receipts remain separately gated.' >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Record no-mutation execution boundary
+        shell: bash
+        run: |
+          set -euo pipefail
+          git -C m3-product diff --exit-code
+          git -C m3-recipe-secondary diff --exit-code
+          echo 'No patch applied and no Git ref pushed. Hunk resolver / compiler / JNI approval gates are unchanged.' >> "$GITHUB_STEP_SUMMARY"

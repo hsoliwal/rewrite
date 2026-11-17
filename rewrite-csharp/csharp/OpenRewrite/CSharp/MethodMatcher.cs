@@ -344,11 +344,11 @@ public class MethodMatcher
 
         private bool MatchesElement(JavaType paramType)
         {
-            var fqn = TypeUtils.GetFullyQualifiedName(paramType);
-            if (paramType is JavaType.Primitive primitive &&
-                KeywordToFqn.TryGetValue(primitive.Kind == JavaType.PrimitiveKind.Boolean ? "bool" : primitive.Keyword,
-                    out var primitiveFqn))
-                fqn = primitiveFqn;
+            // The shared tree spells primitives with Java keywords (e.g. boolean and int).
+            // Compare their .NET names too, so bool and System.Int32 match attributed C# calls.
+            var fqn = paramType is JavaType.Primitive primitive
+                ? TypeUtils.PrimitiveToFqn(primitive.Kind) ?? primitive.Keyword
+                : TypeUtils.GetFullyQualifiedName(paramType);
 
             if (fqn != null)
             {
