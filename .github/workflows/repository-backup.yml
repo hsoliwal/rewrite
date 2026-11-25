@@ -11,6 +11,13 @@ concurrency:
 
 jobs:
   repository-backup:
+    # Upstream-only S3 backup (openrewrite's bucket via an OIDC role): forks skip it.
+    # The permissions are exactly what the nested job requests; without them a fork's
+    # read-only default token makes every scheduled run a startup failure.
+    if: github.repository_owner == 'openrewrite'
+    permissions:
+      contents: read
+      id-token: write
     uses: openrewrite/gh-automation/.github/workflows/repository-backup.yml@main
     secrets:
       bucket_mirror_target: ${{ secrets.S3_GITHUB_REPOSITORY_BACKUPS_BUCKET_NAME }}
